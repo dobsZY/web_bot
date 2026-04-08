@@ -259,32 +259,64 @@ def scroll_ile_topla(tarayici: Tarayici) -> list[str]:
 # FOTOĞRAF BULUCU
 # ============================================================
 
+def van_mi_kontrol(driver) -> bool:
+    """Detay sayfasında ilanın 'Van' kasa tipinde olup olmadığını kontrol et."""
+    try:
+        sonuc = driver.execute_script("""
+        var text = document.body.innerText || '';
+        // Kasa tipi satırını ara
+        if (text.indexOf('Kasa Tipi') > -1 || text.indexOf('kasa tipi') > -1) {
+            // Van kelimesi geçiyor mu
+            var lines = text.split('\\n');
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].toLowerCase();
+                if (line.indexOf('kasa tipi') > -1 || line.indexOf('kasa-tipi') > -1) {
+                    if (line.indexOf('van') > -1) return true;
+                    // Sonraki satıra da bak
+                    if (i + 1 < lines.length && lines[i+1].toLowerCase().indexOf('van') > -1) return true;
+                }
+            }
+        }
+        // JSON-LD veya meta kontrolü
+        var scripts = document.querySelectorAll('script[type="application/ld+json"]');
+        for (var j = 0; j < scripts.length; j++) {
+            var t = scripts[j].textContent.toLowerCase();
+            if (t.indexOf('van') > -1) return true;
+        }
+        return false;
+        """)
+        return bool(sonuc)
+    except Exception:
+        return True  # Hata durumunda indir
+
+
 def fotolari_bul(driver) -> list[str]:
-    """İlan detay sayfasındaki galeri fotoğraf URL'lerini çıkar.
-    Galeri resimleri: class içinde 'cursor-pointer' ve 'object-contain',
-    URL pattern: imvm.letgo.com/v1/files/{id}-OLXAUTOTR/image;s=780x780
-    Boyutu 1024x1024'e yükselt.
+    """İlan detay sayfasındaki SADECE galeri fotoğraf URL'lerini çıkar.
+    Galeri resimleri: class=object-contain (ilanın kendi fotoğrafları)
+    Benzer ilan resimleri: class=object-cover (bunları ALMA)
     """
     js = """
     var urls = [];
     var seen = new Set();
-    // Galeri resimleri — 780x780 boyutlu, cursor-pointer class'lı
-    document.querySelectorAll('img.cursor-pointer[src*="OLXAUTOTR"]').forEach(function(img) {
+    // Sadece galeri resimleri — object-contain class'lı (ilanın kendi fotoğrafları)
+    // object-cover olanlar sayfanın altındaki 'benzer ilanlar' resimleri
+    document.querySelectorAll('img[class*="object-contain"][src*="OLXAUTOTR"]').forEach(function(img) {
         var src = img.src || '';
         if (src && !seen.has(src) && src.indexOf('v1/files') > -1) {
-            // thumbnail'ları (100x100) atla
             if (src.indexOf('s=100x100') > -1) return;
             seen.add(src);
-            // 780x780 -> 1024x1024 yükselt
             src = src.replace(/;s=\\d+x\\d+/, ';s=1024x1024');
             urls.push(src);
         }
     });
-    // Fallback: tüm OLXAUTOTR resimleri (thumbnail hariç)
+    // Fallback: cursor-pointer class'lı OLXAUTOTR resimleri
     if (urls.length === 0) {
-        document.querySelectorAll('img[src*="OLXAUTOTR"]').forEach(function(img) {
+        document.querySelectorAll('img.cursor-pointer[src*="OLXAUTOTR"]').forEach(function(img) {
             var src = img.src || '';
             if (src && src.indexOf('v1/files') > -1 && src.indexOf('s=100x100') === -1 && !seen.has(src)) {
+                // Benzer ilan resmiyse atla (parent h-[260px])
+                var p = img.parentElement ? img.parentElement.className : '';
+                if (p.indexOf('h-[260px]') > -1) return;
                 seen.add(src);
                 src = src.replace(/;s=\\d+x\\d+/, ';s=1024x1024');
                 urls.push(src);
@@ -383,6 +415,11 @@ def calistir():
             """)
         except Exception:
             pass
+
+        # Kategori kontrolü — van mı?
+        if not van_mi_kontrol(tarayici.driver):
+            log.info(f"  Van değil, atlıyorum.")
+            continue
 
         fotolar = fotolari_bul(tarayici.driver)
         if not fotolar:
