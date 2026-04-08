@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Arabam.com Fotoğraf Seçici - Web Arayüzü
-==========================================
-İlanları tarar, fotoğrafları gösterir, kullanıcı seçer, indirir.
+Arabam.com Otomatik Fotoğraf İndirici
+======================================
+İlanları tarar, tüm fotoğrafları otomatik indirir.
 
 Kullanım:
     python app.py
@@ -14,11 +14,11 @@ import time
 import random
 import logging
 import re
-import threading
 from pathlib import Path
-from urllib.parse import urljoin, quote, unquote
+from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests as std_requests
 import undetected_chromedriver as uc
 from selenium.common.exceptions import (
     TimeoutException,
@@ -26,8 +26,6 @@ from selenium.common.exceptions import (
     InvalidSessionIdException,
 )
 from bs4 import BeautifulSoup
-from curl_cffi import requests as cffi_requests
-from flask import Flask, render_template, jsonify, request, redirect, Response
 
 import config
 
@@ -281,34 +279,17 @@ class FotoIslem:
             return []
 
     def indir(self, url: str, kayit_yolu: str) -> bool:
-        """Thread-safe indirme."""
-        oturum = cffi_requests.Session(impersonate="chrome")
-        oturum.headers.update({
-            "User-Agent": self._ua,
-            "Referer": "https://www.arabam.com/",
-            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-        })
-
+        """Tek bir fotoğrafı indir (requests ile)."""
         for d in range(config.YENIDEN_DENEME):
             try:
-                yanit = oturum.get(url, timeout=20)
-                yanit.raise_for_status()
-
-                tip = yanit.headers.get("Content-Type", "")
-                if "image" not in tip and "octet" not in tip:
-                    return False
-
-                with open(kayit_yolu, "wb") as f:
-                    f.write(yanit.content)
-
-                boyut = os.path.getsize(kayit_yolu)
-                if boyut < 3000:
-                    os.remove(kayit_yolu)
-                    return False
-
-                log.info(f"  ✓ {os.path.basename(kayit_yolu)} ({boyut//1024} KB)")
-                return True
-
+                r = std_requests.get(url, timeout=15, headers={
+                    "User-Agent": self._ua,
+                    "Referer": "https://www.arabam.com/",
+                })
+                if r.status_code == 200 and len(r.content) > 1000:
+                    with open(kayit_yolu, "wb") as f:
+                        f.write(r.content)
+                    return True
             except Exception:
                 if d < config.YENIDEN_DENEME - 1:
                     bekle(0.5, 1)
@@ -316,257 +297,77 @@ class FotoIslem:
 
 
 # ============================================================
-# FLASK APP
+# ANA İŞLEM
 # ============================================================
 
-app = Flask(__name__)
-
-# Global durum
-durum = {
-    "tarayici": None,
-    "toplayici": None,
-    "foto": None,
-    "linkler": [],
-    "sira": 0,
-    "mevcut_fotolar": [],
-    "mevcut_url": "",
-    "mevcut_ilan_no": "",
-    "hazir": False,
-    "ilan_hazir": False,       # Mevcut ilan fotoğrafları hazır mı?
-    "ilan_yukleniyor": False,  # Chrome şu anda ilan yüklüyor mu?
-    "indirilen_toplam": 0,
-    "atlanan_toplam": 0,
-    "bitti": False,
-}
-
-# Chrome işlemleri için kilit
-chrome_kilit = threading.Lock()
-
-
-def _foto_indir_tek(url, dosya_yolu):
-    """Tek bir fotoğrafı 800x600 boyutunda diske indir."""
-    import requests as std_requests
-    try:
-        r = std_requests.get(url, timeout=15, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/146.0",
-            "Referer": "https://www.arabam.com/",
-        })
-        if r.status_code == 200 and len(r.content) > 1000:
-            with open(dosya_yolu, "wb") as f:
-                f.write(r.content)
-            return True
-    except Exception as h:
-        log.debug(f"Foto indirme hatası: {h}")
-    return False
-
-
-def ilan_topla_thread():
-    """Arka planda ilan topla, ardından tüm fotoğrafları otomatik indir."""
-    log.info("İlan toplama başlıyor...")
-    d = durum
-    d["tarayici"] = Tarayici()
-    d["tarayici"].baslat()
-    d["toplayici"] = IlanToplayici(d["tarayici"])
-    d["foto"] = FotoIslem(d["tarayici"])
-
-    for adi, url in config.KATEGORILER.items():
-        log.info(f"Kategori: {adi}")
-        linkler = d["toplayici"].topla(url)
-        d["linkler"].extend(linkler)
-
-    d["hazir"] = True
-    log.info(f"Toplam {len(d['linkler'])} ilan toplandı. Otomatik indirme başlıyor...")
-
-    # Tüm ilanları otomatik işle
+def calistir():
+    klasor_olustur(config.DATASET_DIR)
     kategori = list(config.KATEGORILER.keys())[0]
 
-    while d["sira"] < len(d["linkler"]):
-        ilan_url = d["linkler"][d["sira"]]
+    # Chrome başlat
+    tarayici = Tarayici()
+    tarayici.baslat()
+    toplayici = IlanToplayici(tarayici)
+    foto = FotoIslem(tarayici)
+
+    # İlanları topla
+    linkler = []
+    for adi, url in config.KATEGORILER.items():
+        log.info(f"Kategori: {adi}")
+        linkler.extend(toplayici.topla(url))
+
+    toplam = len(linkler)
+    log.info(f"Toplam {toplam} ilan. İndirme başlıyor...")
+    print("=" * 60)
+
+    indirilen_toplam = 0
+    islenen = 0
+
+    for sira, ilan_url in enumerate(linkler):
         ilan_no = ilan_no_cikar(ilan_url)
         ilan_klasoru = os.path.join(config.DATASET_DIR, kategori, ilan_no)
 
-        # Zaten indirilmiş mi?
+        # Zaten var mı?
         if os.path.exists(ilan_klasoru):
             mevcut = len([f for f in os.listdir(ilan_klasoru)
                           if f.endswith(('.jpg', '.png', '.webp'))])
             if mevcut >= 1:
-                log.info(f"[{d['sira']+1}/{len(d['linkler'])}] {ilan_no} zaten var ({mevcut} foto), atlıyorum.")
-                d["sira"] += 1
+                islenen += 1
                 continue
 
-        d["mevcut_url"] = ilan_url
-        d["mevcut_ilan_no"] = ilan_no
+        log.info(f"[{sira+1}/{toplam}] {ilan_no}")
 
-        log.info(f"[{d['sira']+1}/{len(d['linkler'])}] {ilan_url}")
-
-        # Sayfaya git
-        if not d["tarayici"].git(ilan_url):
-            log.warning(f"Sayfa yüklenemedi: {ilan_url}")
-            d["sira"] += 1
+        if not tarayici.git(ilan_url):
+            log.warning(f"  Sayfa yüklenemedi, atlıyorum.")
             continue
 
         bekle(config.ILAN_MIN_BEKLEME, config.ILAN_MAKS_BEKLEME)
 
-        # Fotoğrafları bul
-        fotolar = d["foto"].foto_bul()
+        fotolar = foto.foto_bul()
         if not fotolar:
-            log.info(f"  → Fotoğraf bulunamadı, atlıyorum.")
-            d["sira"] += 1
+            log.info(f"  Fotoğraf yok, atlıyorum.")
             continue
 
-        # Tüm fotoğrafları indir
         klasor_olustur(ilan_klasoru)
         indirilen = 0
         with ThreadPoolExecutor(max_workers=6) as pool:
             futures = {}
             for i, foto_url in enumerate(fotolar):
                 dosya = os.path.join(ilan_klasoru, f"foto_{i+1}.jpg")
-                futures[pool.submit(_foto_indir_tek, foto_url, dosya)] = dosya
+                futures[pool.submit(foto.indir, foto_url, dosya)] = dosya
             for f in as_completed(futures):
                 if f.result():
                     indirilen += 1
 
-        d["indirilen_toplam"] += indirilen
-        d["sira"] += 1
-        log.info(f"  → {indirilen}/{len(fotolar)} fotoğraf indirildi.")
+        indirilen_toplam += indirilen
+        islenen += 1
+        log.info(f"  {indirilen}/{len(fotolar)} foto indirildi. [Toplam: {indirilen_toplam}]")
 
-    d["bitti"] = True
-    log.info(f"TAMAMLANDI! Toplam {d['indirilen_toplam']} fotoğraf indirildi.")
+    tarayici.kapat()
+    print("=" * 60)
+    log.info(f"BİTTİ! {islenen} ilan işlendi, {indirilen_toplam} fotoğraf indirildi.")
+    log.info(f"Klasör: {os.path.abspath(config.DATASET_DIR)}")
 
-
-def _temel_veri():
-    """Template'e gönderilecek temel veriler."""
-    return {
-        "sira": durum["sira"] + 1,
-        "toplam": len(durum["linkler"]),
-        "indirilen": durum["indirilen_toplam"],
-        "atlanan": durum["atlanan_toplam"],
-    }
-
-
-@app.route("/")
-def anasayfa():
-    d = durum
-    veri = _temel_veri()
-    veri["mevcut_ilan"] = d.get("mevcut_ilan_no", "")
-    veri["mevcut_url"] = d.get("mevcut_url", "")
-    veri["bitti"] = d.get("bitti", False)
-    veri["hazir"] = d["hazir"]
-    return render_template("secici.html", **veri)
-
-
-@app.route("/indir", methods=["POST"])
-def indir_route():
-    d = durum
-    secili = request.form.getlist("secili")
-
-    if not secili or not d["mevcut_fotolar"]:
-        d["sira"] += 1
-        return redirect("/")
-
-    ilan_no = d["mevcut_ilan_no"]
-    kategori = list(config.KATEGORILER.keys())[0]
-    ilan_klasoru = os.path.join(config.DATASET_DIR, kategori, ilan_no)
-    klasor_olustur(ilan_klasoru)
-
-    indirilen = 0
-    gorevler = []
-    for i, idx_str in enumerate(sorted(secili, key=int)):
-        idx = int(idx_str)
-        if idx < len(d["mevcut_fotolar"]):
-            dosya = os.path.join(ilan_klasoru, f"foto_{i+1}.jpg")
-            gorevler.append((d["mevcut_fotolar"][idx], dosya))
-
-    if gorevler:
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            futures = {
-                pool.submit(d["foto"].indir, url, yol): yol
-                for url, yol in gorevler
-            }
-            for f in as_completed(futures):
-                if f.result():
-                    indirilen += 1
-
-    d["indirilen_toplam"] += indirilen
-    d["sira"] += 1
-
-    log.info(f"İlan {ilan_no}: {indirilen}/{len(gorevler)} fotoğraf indirildi.")
-    _sonraki_ilani_yukle()
-    return redirect("/")
-
-
-@app.route("/proxy-img")
-def proxy_img():
-    """Resimleri sunucu üzerinden proxy'le — CORS sorununu çözer."""
-    url = request.args.get("url", "")
-    if not url:
-        return Response("No URL", status=400)
-
-    # Birden fazla yöntemle dene
-    yontemler = [
-        ("requests", _indir_requests),
-        ("curl_cffi", _indir_curl),
-    ]
-    for adi, fonk in yontemler:
-        try:
-            icerik, tip = fonk(url)
-            if icerik:
-                return Response(icerik, content_type=tip,
-                                headers={"Cache-Control": "public, max-age=3600"})
-        except Exception as h:
-            log.debug(f"Proxy ({adi}) hatası: {h}")
-            continue
-
-    return Response("Error", status=502)
-
-
-def _indir_requests(url):
-    """Standart requests ile indir."""
-    import requests as std_requests
-    r = std_requests.get(url, timeout=15, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
-        "Referer": "https://www.arabam.com/",
-        "Accept": "image/*,*/*;q=0.8",
-    })
-    r.raise_for_status()
-    return r.content, r.headers.get("Content-Type", "image/jpeg")
-
-
-def _indir_curl(url):
-    """curl_cffi ile indir."""
-    oturum = cffi_requests.Session(impersonate="chrome")
-    oturum.headers.update({
-        "Referer": "https://www.arabam.com/",
-        "Accept": "image/*,*/*;q=0.8",
-    })
-    yanit = oturum.get(url, timeout=15)
-    yanit.raise_for_status()
-    return yanit.content, yanit.headers.get("Content-Type", "image/jpeg")
-
-
-@app.route("/atla")
-def atla_route():
-    durum["sira"] += 1
-    durum["atlanan_toplam"] += 1
-    log.info(f"İlan atlandı. Sonraki: {durum['sira']+1}")
-    _sonraki_ilani_yukle()
-    return redirect("/")
-
-
-# ============================================================
-# BAŞLAT
-# ============================================================
 
 if __name__ == "__main__":
-    klasor_olustur(config.DATASET_DIR)
-
-    # Arka planda ilan topla
-    t = threading.Thread(target=ilan_topla_thread, daemon=True)
-    t.start()
-
-    log.info("Web arayüzü başlatılıyor: http://localhost:5000")
-    print("\n" + "=" * 50)
-    print("  TARAYICIDA AÇ: http://localhost:5000")
-    print("=" * 50 + "\n")
-
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False, threaded=True)
+    calistir()
