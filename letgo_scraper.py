@@ -214,7 +214,7 @@ def ilan_linklerini_topla(driver) -> list[str]:
         return []
 
 
-def scroll_ile_topla(tarayici: Tarayici) -> list[str]:
+def scroll_ile_topla(tarayici: Tarayici, hedef_url: str = HEDEF_URL) -> list[str]:
     """Infinite scroll ile tüm ilanları topla."""
     driver = tarayici.driver
     gorulen = set()
@@ -251,16 +251,19 @@ def scroll_ile_topla(tarayici: Tarayici) -> list[str]:
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         bekle(1, 1.5)
 
-        # "Daha fazla yükle" butonuna bas
+        # "Daha fazla yükle" butonuna bas (navigate engelle)
         try:
             driver.execute_script("""
-            var buttons = document.querySelectorAll('button, a');
-            for (var i = 0; i < buttons.length; i++) {
-                var txt = (buttons[i].innerText || '').toLowerCase();
-                if (txt.indexOf('daha fazla') > -1 || txt.indexOf('daha fazla yükle') > -1 ||
-                    txt.indexOf('load more') > -1 || txt.indexOf('daha fazla ilan') > -1 ||
-                    txt.indexOf('devamını') > -1 || txt.indexOf('daha fazla göster') > -1) {
-                    buttons[i].click();
+            var els = document.querySelectorAll('button, a');
+            for (var i = 0; i < els.length; i++) {
+                var txt = (els[i].innerText || '').toLowerCase().trim();
+                if (txt.indexOf('daha fazla') > -1 || txt.indexOf('load more') > -1 ||
+                    txt.indexOf('devamını') > -1) {
+                    // <a> ise href'i kaldır ki navigate etmesin
+                    if (els[i].tagName === 'A') {
+                        els[i].removeAttribute('href');
+                    }
+                    els[i].click();
                     break;
                 }
             }
@@ -268,6 +271,19 @@ def scroll_ile_topla(tarayici: Tarayici) -> list[str]:
         except Exception:
             pass
         bekle(SCROLL_BEKLEME, SCROLL_BEKLEME + 1)
+
+        # URL kontrolü — filtre kaybolmuşsa geri dön
+        try:
+            mevcut_url = driver.current_url
+            if 'kasa-tipi' not in mevcut_url:
+                log.warning("Filtre kayboldu, geri dönülüyor...")
+                driver.get(hedef_url)
+                bekle(3, 4)
+                # Scroll pozisyonunu yeniden aşağı çek
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                bekle(1, 2)
+        except Exception:
+            pass
 
     log.info(f"Toplam {len(tum_linkler)} ilan toplandı.")
     return tum_linkler
