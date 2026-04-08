@@ -10,6 +10,15 @@ env/
 # Dataset (büyük dosyalar git'e yüklenmemeli)
 dataset/
 
+# Kalıcı Chrome profili (büyük ve kullanıcıya özel)
+chrome_profil/
+
+# Çerez dosyası (kullanıcıya özel oturum bilgileri)
+cookies.json
+
+# Proxy dosyası (hassas bilgiler içerebilir)
+proxies.txt
+
 # Log dosyaları
 *.log
 
@@ -22,3 +31,9 @@ dataset/
 # OS
 Thumbs.db
 .DS_Store
+
+# Geçici thumbnail dosyaları
+static/temp/
+
+# Test dosyaları
+test_*.py
