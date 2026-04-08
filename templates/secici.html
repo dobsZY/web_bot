@@ -3,156 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Araç Fotoğraf Seçici</title>
+    <title>Araç Fotoğraf İndirici</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Arial, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
-        .header { background: #16213e; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f3460; position: sticky; top: 0; z-index: 100; }
-        .header h1 { font-size: 18px; color: #e94560; }
-        .progress { font-size: 14px; color: #a0a0b0; }
-        .progress b { color: #e94560; }
-        .stats { display: flex; gap: 20px; font-size: 13px; color: #a0a0b0; }
-        .stats span b { color: #53d769; }
-        .ilan-info { background: #16213e; padding: 12px 30px; border-bottom: 1px solid #0f3460; }
-        .ilan-info a { color: #5dade2; text-decoration: none; font-size: 13px; }
-        .ilan-info a:hover { text-decoration: underline; }
-        .actions { display: flex; gap: 10px; padding: 15px 30px; background: #1a1a2e; position: sticky; top: 56px; z-index: 99; border-bottom: 1px solid #333; flex-wrap: wrap; align-items: center; }
-        .btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; text-decoration: none; display: inline-block; }
-        .btn-indir { background: #e94560; color: white; }
-        .btn-indir:hover { background: #c73850; }
-        .btn-tumunu { background: #0f3460; color: white; }
-        .btn-tumunu:hover { background: #1a4a8a; }
-        .btn-atla { background: #333; color: #aaa; }
-        .btn-atla:hover { background: #444; color: #fff; }
-        .secim-bilgi { margin-left: auto; font-size: 14px; color: #a0a0b0; }
-        .secim-bilgi b { color: #53d769; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 20px 30px; }
-        .foto-kart { position: relative; border-radius: 8px; overflow: hidden; cursor: pointer; border: 3px solid transparent; transition: all 0.2s; background: #16213e; }
-        .foto-kart:hover { border-color: #5dade2; }
-        .foto-kart.secili { border-color: #53d769; }
-        .foto-kart.secili .check { display: flex; }
-        .check { display: none; position: absolute; top: 8px; right: 8px; background: #53d769; color: white; width: 28px; height: 28px; border-radius: 50%; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; }
-        .foto-kart img { width: 100%; height: 200px; object-fit: cover; display: block; }
-        .foto-kart .idx { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.7); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        .header { background: #16213e; padding: 20px 30px; border-bottom: 2px solid #0f3460; }
+        .header h1 { font-size: 20px; color: #e94560; margin-bottom: 10px; }
+        .stats { display: flex; gap: 30px; font-size: 14px; color: #a0a0b0; flex-wrap: wrap; }
+        .stats span b { color: #53d769; font-size: 16px; }
         .merkez { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; color: #a0a0b0; }
-        .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top: 4px solid #e94560; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 15px; }
+        .spinner { width: 50px; height: 50px; border: 4px solid #333; border-top: 4px solid #e94560; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 20px; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .mesaj { font-size: 18px; margin: 10px 0; }
-        .mesaj-basari { color: #53d769; }
-        .mesaj-hata { color: #e94560; }
-        input[type="hidden"] { display: none; }
+        .bar-container { width: 80%; max-width: 600px; background: #16213e; border-radius: 10px; overflow: hidden; margin: 20px 0; height: 30px; }
+        .bar { height: 100%; background: linear-gradient(90deg, #e94560, #53d769); transition: width 0.5s ease; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; color: white; min-width: 40px; }
+        .mevcut { margin-top: 20px; padding: 15px 25px; background: #16213e; border-radius: 8px; font-size: 13px; color: #5dade2; max-width: 80%; word-break: break-all; text-align: center; }
+        .bitti-mesaj { color: #53d769; font-size: 24px; font-weight: bold; }
     </style>
+    {% if not bitti %}
+    <meta http-equiv="refresh" content="5;url=/">
+    {% endif %}
 </head>
 <body>
     <div class="header">
-        <h1>Araç Fotoğraf Seçici</h1>
-        <div class="progress">
-            İlan <b>{{ sira }}</b> / <b>{{ toplam }}</b>
-        </div>
+        <h1>Araç Fotoğraf İndirici</h1>
         <div class="stats">
-            <span>İndirilen: <b>{{ indirilen }}</b></span>
-            <span>Atlanan: <b>{{ atlanan }}</b></span>
+            <span>İlan: <b>{{ sira }}</b> / <b>{{ toplam }}</b></span>
+            <span>İndirilen Fotoğraf: <b>{{ indirilen }}</b></span>
         </div>
     </div>
 
-    {% if mesaj %}
     <div class="merkez">
-        <p class="mesaj {{ mesaj_tip }}">{{ mesaj }}</p>
-        {% if yonlendir %}
-        <meta http-equiv="refresh" content="3;url=/">
-        <p>3 saniye içinde yönlendiriliyorsunuz...</p>
+        {% if bitti %}
+            <p class="bitti-mesaj">Tamamlandı!</p>
+            <p style="margin-top:15px; font-size:16px;">Toplam <b style="color:#53d769">{{ indirilen }}</b> fotoğraf indirildi.</p>
+            <p style="margin-top:10px; color:#666;">dataset/ klasöründen istemediğin fotoğrafları silebilirsin.</p>
+        {% elif not hazir %}
+            <div class="spinner"></div>
+            <p style="font-size:16px;">İlanlar toplanıyor...</p>
+            <p style="margin-top:8px; color:#666;">{{ toplam }} ilan bulundu</p>
+        {% else %}
+            <div class="spinner"></div>
+            <p style="font-size:16px;">Fotoğraflar indiriliyor...</p>
+
+            {% if toplam > 0 %}
+            <div class="bar-container">
+                <div class="bar" style="width: {{ (sira * 100 / toplam)|int }}%">
+                    %{{ (sira * 100 / toplam)|int }}
+                </div>
+            </div>
+            {% endif %}
+
+            <p style="color:#888;">{{ sira }} / {{ toplam }} ilan işlendi &mdash; {{ indirilen }} fotoğraf indirildi</p>
+
+            {% if mevcut_url %}
+            <div class="mevcut">{{ mevcut_url }}</div>
+            {% endif %}
         {% endif %}
     </div>
-    {% elif bekle %}
-    <div class="merkez">
-        <div class="spinner"></div>
-        <p>İlanlar toplanıyor... ({{ toplam }} ilan bulundu)</p>
-        <p style="margin-top:10px; font-size:13px; color:#666">Sayfa 5 saniye sonra yenilenecek</p>
-        <meta http-equiv="refresh" content="5;url=/">
-    </div>
-    {% elif yukleniyor %}
-    <div class="merkez">
-        <div class="spinner"></div>
-        <p>İlan yükleniyor... ({{ sira }} / {{ toplam }})</p>
-        <p style="margin-top:10px; font-size:13px; color:#666">Sayfa 3 saniye sonra yenilenecek</p>
-        <meta http-equiv="refresh" content="3;url=/">
-    </div>
-    {% elif bitti %}
-    <div class="merkez">
-        <p class="mesaj mesaj-basari">Tüm ilanlar işlendi!</p>
-        <p>Toplam {{ indirilen }} fotoğraf indirildi.</p>
-    </div>
-    {% elif foto_listesi %}
-    <div class="ilan-info">
-        <a href="{{ ilan_url }}" target="_blank">{{ ilan_url }}</a>
-    </div>
-
-    <form method="POST" action="/indir" id="form-indir">
-        <div class="actions">
-            <button type="submit" class="btn btn-indir" id="btn-indir" disabled>Seçilenleri İndir</button>
-            <button type="button" class="btn btn-tumunu" onclick="tumunuSec()">Tümünü Seç</button>
-            <button type="button" class="btn btn-tumunu" onclick="secimKaldir()">Seçimi Kaldır</button>
-            <a href="/atla" class="btn btn-atla">Bu İlanı Atla</a>
-            <div class="secim-bilgi"><b id="secim-sayi">0</b> / {{ foto_listesi|length }} seçili</div>
-        </div>
-
-        <div class="grid">
-            {% for f in foto_listesi %}
-            <div class="foto-kart" id="kart-{{ f.idx }}" onclick="secimToggle({{ f.idx }})">
-                <span class="idx">#{{ f.idx + 1 }}</span>
-                <div class="check">✓</div>
-                <input type="checkbox" name="secili" value="{{ f.idx }}" id="cb-{{ f.idx }}" style="display:none">
-                {% if f.thumb %}
-                <img src="{{ f.thumb }}" loading="lazy">
-                {% else %}
-                <div style="width:100%;height:200px;background:#333;display:flex;align-items:center;justify-content:center;color:#666">Yüklenemedi</div>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
-    </form>
-    {% else %}
-    <div class="merkez">
-        <p>Bu ilanda fotoğraf bulunamadı.</p>
-        <a href="/atla" class="btn btn-atla" style="margin-top:15px">Sonraki İlan</a>
-    </div>
-    {% endif %}
-
-    <script>
-        function secimToggle(idx) {
-            var kart = document.getElementById('kart-' + idx);
-            var cb = document.getElementById('cb-' + idx);
-            if (kart.classList.contains('secili')) {
-                kart.classList.remove('secili');
-                cb.checked = false;
-            } else {
-                kart.classList.add('secili');
-                cb.checked = true;
-            }
-            secimGuncelle();
-        }
-
-        function tumunuSec() {
-            document.querySelectorAll('.foto-kart').forEach(function(k, i) {
-                k.classList.add('secili');
-                document.getElementById('cb-' + i).checked = true;
-            });
-            secimGuncelle();
-        }
-
-        function secimKaldir() {
-            document.querySelectorAll('.foto-kart').forEach(function(k, i) {
-                k.classList.remove('secili');
-                document.getElementById('cb-' + i).checked = false;
-            });
-            secimGuncelle();
-        }
-
-        function secimGuncelle() {
-            var n = document.querySelectorAll('.foto-kart.secili').length;
-            document.getElementById('secim-sayi').textContent = n;
-            document.getElementById('btn-indir').disabled = (n === 0);
-        }
-    </script>
 </body>
 </html>
