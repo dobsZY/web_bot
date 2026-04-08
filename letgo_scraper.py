@@ -259,11 +259,13 @@ def scroll_ile_topla(tarayici: Tarayici, hedef_url: str = HEDEF_URL) -> list[str
                 var txt = (els[i].innerText || '').toLowerCase().trim();
                 if (txt.indexOf('daha fazla') > -1 || txt.indexOf('load more') > -1 ||
                     txt.indexOf('devamını') > -1) {
-                    // <a> ise href'i kaldır ki navigate etmesin
-                    if (els[i].tagName === 'A') {
-                        els[i].removeAttribute('href');
+                    var el = els[i];
+                    // Navigate engelle — event ile tetikle
+                    if (el.tagName === 'A') {
+                        el.removeAttribute('href');
+                        el.addEventListener('click', function(e) { e.preventDefault(); }, true);
                     }
-                    els[i].click();
+                    el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
                     break;
                 }
             }
