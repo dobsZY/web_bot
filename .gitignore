@@ -37,3 +37,8 @@ static/temp/
 
 # Test dosyaları
 test_*.py
+letgo_kontrol.py
+letgo_detay.json
+
+# Letgo dataset
+dataset_letgo/
