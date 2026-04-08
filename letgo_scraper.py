@@ -249,6 +249,24 @@ def scroll_ile_topla(tarayici: Tarayici) -> list[str]:
 
         # Aşağı scroll
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        bekle(1, 1.5)
+
+        # "Daha fazla yükle" butonuna bas
+        try:
+            driver.execute_script("""
+            var buttons = document.querySelectorAll('button, a');
+            for (var i = 0; i < buttons.length; i++) {
+                var txt = (buttons[i].innerText || '').toLowerCase();
+                if (txt.indexOf('daha fazla') > -1 || txt.indexOf('daha fazla yükle') > -1 ||
+                    txt.indexOf('load more') > -1 || txt.indexOf('daha fazla ilan') > -1 ||
+                    txt.indexOf('devamını') > -1 || txt.indexOf('daha fazla göster') > -1) {
+                    buttons[i].click();
+                    break;
+                }
+            }
+            """)
+        except Exception:
+            pass
         bekle(SCROLL_BEKLEME, SCROLL_BEKLEME + 1)
 
     log.info(f"Toplam {len(tum_linkler)} ilan toplandı.")
@@ -258,37 +276,6 @@ def scroll_ile_topla(tarayici: Tarayici) -> list[str]:
 # ============================================================
 # FOTOĞRAF BULUCU
 # ============================================================
-
-def van_mi_kontrol(driver) -> bool:
-    """Detay sayfasında ilanın 'Van' kasa tipinde olup olmadığını kontrol et."""
-    try:
-        sonuc = driver.execute_script("""
-        var text = document.body.innerText || '';
-        // Kasa tipi satırını ara
-        if (text.indexOf('Kasa Tipi') > -1 || text.indexOf('kasa tipi') > -1) {
-            // Van kelimesi geçiyor mu
-            var lines = text.split('\\n');
-            for (var i = 0; i < lines.length; i++) {
-                var line = lines[i].toLowerCase();
-                if (line.indexOf('kasa tipi') > -1 || line.indexOf('kasa-tipi') > -1) {
-                    if (line.indexOf('van') > -1) return true;
-                    // Sonraki satıra da bak
-                    if (i + 1 < lines.length && lines[i+1].toLowerCase().indexOf('van') > -1) return true;
-                }
-            }
-        }
-        // JSON-LD veya meta kontrolü
-        var scripts = document.querySelectorAll('script[type="application/ld+json"]');
-        for (var j = 0; j < scripts.length; j++) {
-            var t = scripts[j].textContent.toLowerCase();
-            if (t.indexOf('van') > -1) return true;
-        }
-        return false;
-        """)
-        return bool(sonuc)
-    except Exception:
-        return True  # Hata durumunda indir
-
 
 def fotolari_bul(driver) -> list[str]:
     """İlan detay sayfasındaki SADECE galeri fotoğraf URL'lerini çıkar.
@@ -415,11 +402,6 @@ def calistir():
             """)
         except Exception:
             pass
-
-        # Kategori kontrolü — van mı?
-        if not van_mi_kontrol(tarayici.driver):
-            log.info(f"  Van değil, atlıyorum.")
-            continue
 
         fotolar = fotolari_bul(tarayici.driver)
         if not fotolar:
