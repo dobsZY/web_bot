@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-PlatesMania.com TR Galeri Scraper
-=================================
-https://platesmania.com/tr/gallery sayfalarını tarayarak
-araç fotoğrafı, plaka resmi ve bilgileri toplar.
-
+PlatesMania.com TR Galeri Scraper (HIZLI)
+==========================================
+Selenium ile 1 kez captcha bypass → cookie'lerle requests ile paralel tarama.
 Her galeri sayfasından tek seferde tüm bilgiler çekilir (detay sayfasına girmez).
-Fotoğraflar + plaka resmi + bilgi txt dosyası kaydedilir.
 
 Klasör yapısı:
     dataset_plates/{id}/
@@ -28,8 +25,8 @@ import requests
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from bs4 import BeautifulSoup
 import undetected_chromedriver as uc
-from selenium.common.exceptions import TimeoutException, WebDriverException
 
 # ============================================================
 # AYARLAR
@@ -37,31 +34,15 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 
 DATASET_DIR = "dataset_plates"
 GALERI_URL = "https://platesmania.com/tr/gallery"
-# gallery, gallery-1, gallery-2, ...
-
-# Tarayıcı
-HEADLESS = False
-PENCERE_GENISLIK = 1920
-PENCERE_YUKSEKLIK = 1080
-SAYFA_TIMEOUT = 30
 
 # Hız ayarları
-SAYFA_BEKLEME_MIN = 3.0   # Sayfa yüklenmesi
-SAYFA_BEKLEME_MAKS = 5.0
-COOLDOWN_HER = 20          # Her 20 sayfada mola
+SAYFA_PARALEL = 4          # Aynı anda kaç sayfa çekilsin
+INDIRME_PARALEL = 12       # Aynı anda kaç dosya indirilsin
+SAYFA_BEKLEME = 0.3        # Sayfalar arası bekleme (sn)
+COOLDOWN_HER = 200         # Her 200 sayfada mola
 COOLDOWN_SURE = 10         # 10 sn mola
-
-# Kaç sayfa taranacak (0 = tümü)
-MAKS_SAYFA = 0
-
-# İndirme
-INDIRME_PARALEL = 8
 INDIRME_TIMEOUT = 15
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-    "Referer": "https://platesmania.com/",
-}
+MAKS_SAYFA = 0             # 0 = tümü
 
 # ============================================================
 # LOG
@@ -79,111 +60,110 @@ log = logging.getLogger("plates")
 # YARDIMCILAR
 # ============================================================
 
-def bekle(min_sn: float, maks_sn: float) -> None:
-    time.sleep(random.uniform(min_sn, maks_sn))
-
-
 def klasor_olustur(yol: str) -> None:
     Path(yol).mkdir(parents=True, exist_ok=True)
 
 
-def dosya_indir(url: str, kayit_yolu: str) -> bool:
-    """URL'den dosya indir."""
+# ============================================================
+# CAPTCHA BYPASS — Selenium ile cookie al
+# ============================================================
+
+def cookie_al() -> tuple[dict, str]:
+    """Selenium ile captcha bypass edip cookie ve user-agent al."""
+    log.info("Chrome ile captcha bypass ediliyor...")
+    options = uc.ChromeOptions()
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--lang=tr-TR")
+
+    driver = uc.Chrome(options=options)
+    driver.get(GALERI_URL)
+    time.sleep(12)  # Captcha çözülmesini bekle
+
+    # Cookie ve UA al
+    cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
+    ua = driver.execute_script("return navigator.userAgent")
+
+    # Doğrulama — gerçek içerik yüklendi mi?
+    has_data = driver.execute_script("return document.querySelectorAll('.panel').length > 0")
+    driver.quit()
+
+    if not has_data:
+        log.error("Captcha geçilemedi! Chrome'da manuel olarak sayfayı açıp tekrar deneyin.")
+        sys.exit(1)
+
+    log.info(f"Captcha geçildi! {len(cookies)} cookie alındı.")
+    return cookies, ua
+
+
+def session_olustur(cookies: dict, ua: str) -> requests.Session:
+    """Cookie'lerle requests session oluştur."""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+        "Referer": "https://platesmania.com/tr/gallery",
+    })
+    for k, v in cookies.items():
+        session.cookies.set(k, v, domain=".platesmania.com")
+    return session
+
+
+# ============================================================
+# GALERİ SAYFASINDAN VERİ ÇEK (BeautifulSoup)
+# ============================================================
+
+def galeri_sayfasi_cek(session: requests.Session, sayfa_no: int) -> list[dict]:
+    """Tek bir galeri sayfasını requests ile çek ve parse et."""
+    if sayfa_no == 0:
+        url = GALERI_URL
+    else:
+        url = f"{GALERI_URL}-{sayfa_no}"
+
     try:
-        r = requests.get(url, timeout=INDIRME_TIMEOUT, headers=HEADERS)
-        if r.status_code == 200 and len(r.content) > 500:
-            with open(kayit_yolu, "wb") as f:
-                f.write(r.content)
-            return True
+        r = session.get(url, timeout=15)
+        if r.status_code != 200:
+            return []
     except Exception:
-        pass
-    return False
-
-
-# ============================================================
-# TARAYICI
-# ============================================================
-
-class Tarayici:
-    def __init__(self):
-        self.driver = None
-
-    def baslat(self):
-        log.info("Chrome başlatılıyor...")
-        options = uc.ChromeOptions()
-        if HEADLESS:
-            options.add_argument("--headless=new")
-        options.add_argument(f"--window-size={PENCERE_GENISLIK},{PENCERE_YUKSEKLIK}")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--lang=tr-TR")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-
-        self.driver = uc.Chrome(options=options)
-        self.driver.set_page_load_timeout(SAYFA_TIMEOUT)
-        self.driver.implicitly_wait(5)
-        log.info("Chrome hazır.")
-
-    def git(self, url: str) -> bool:
-        for deneme in range(3):
-            try:
-                self.driver.get(url)
-                return True
-            except TimeoutException:
-                log.warning(f"  Timeout ({deneme+1}/3)")
-            except WebDriverException as e:
-                log.warning(f"  Hata ({deneme+1}/3): {str(e)[:80]}")
-            bekle(2, 3)
-        return False
-
-    def kapat(self):
-        if self.driver:
-            try:
-                self.driver.quit()
-            except Exception:
-                pass
-            self.driver = None
-
-
-# ============================================================
-# GALERİ SAYFASINDAN VERİ ÇEK
-# ============================================================
-
-def galeri_verisi_cek(driver) -> list[dict]:
-    """Galeri sayfasındaki tüm panellerden veri çek."""
-    try:
-        items = driver.execute_script("""
-        var items = [];
-        var panels = document.querySelectorAll('.panel');
-        for(var i=0; i<panels.length; i++){
-            var p = panels[i];
-            var item = {};
-            // Ana fotoğraf
-            var img = p.querySelector('img[src*="/m/"]');
-            if(!img) continue;
-            item.img_url = img.src;
-            item.alt = img.alt || '';
-            // Link ve ID
-            var a = p.querySelector('a[href*="/nomer"]');
-            if(!a) continue;
-            item.url = a.href;
-            var m = item.url.match(/nomer(\\d+)/);
-            item.id = m ? m[1] : '';
-            if(!item.id) continue;
-            // Plaka resmi
-            var plateImg = p.querySelector('img[src*="inf"]');
-            item.plaka_img_url = plateImg ? plateImg.src : '';
-            item.plaka = plateImg ? (plateImg.alt || '') : '';
-            // Tüm metin (araç bilgisi, konum, tarih)
-            item.text = p.innerText.trim().replace(/\\s+/g, ' ').substring(0, 300);
-            items.push(item);
-        }
-        return items;
-        """)
-        return items or []
-    except Exception as h:
-        log.error(f"Veri çekme hatası: {h}")
         return []
+
+    soup = BeautifulSoup(r.text, "lxml")
+    items = []
+
+    for panel in soup.select(".panel"):
+        item = {}
+
+        # Ana fotoğraf
+        img = panel.select_one('img[src*="/m/"]')
+        if not img:
+            continue
+        item["img_url"] = img.get("src", "")
+        item["alt"] = img.get("alt", "")
+
+        # Link ve ID
+        a = panel.select_one('a[href*="/nomer"]')
+        if not a:
+            continue
+        item["url"] = a.get("href", "")
+        if not item["url"].startswith("http"):
+            item["url"] = "https://platesmania.com" + item["url"]
+        m = re.search(r"nomer(\d+)", item["url"])
+        if not m:
+            continue
+        item["id"] = m.group(1)
+
+        # Plaka resmi
+        plate_img = panel.select_one('img[src*="inf"]')
+        item["plaka_img_url"] = plate_img.get("src", "") if plate_img else ""
+        item["plaka"] = plate_img.get("alt", "") if plate_img else ""
+
+        # Tüm metin
+        item["text"] = " ".join(panel.get_text().split())[:300]
+
+        items.append(item)
+
+    return items
 
 
 def bilgi_parse(item: dict) -> dict:
@@ -305,69 +285,80 @@ def kayit_isle(item: dict, session: requests.Session) -> tuple[str, bool]:
 # ANA İŞLEM
 # ============================================================
 
+def batch_sayfa_cek(session: requests.Session, sayfa_numaralari: list[int]) -> list[dict]:
+    """Birden fazla galeri sayfasını paralel çek."""
+    tum_items = []
+    with ThreadPoolExecutor(max_workers=SAYFA_PARALEL) as pool:
+        futures = {pool.submit(galeri_sayfasi_cek, session, no): no for no in sayfa_numaralari}
+        for f in as_completed(futures):
+            items = f.result()
+            tum_items.extend(items)
+    return tum_items
+
+
+def batch_kayit_isle(items: list[dict], session: requests.Session) -> int:
+    """Birden fazla kaydı paralel indir + kaydet."""
+    yeni = 0
+    with ThreadPoolExecutor(max_workers=INDIRME_PARALEL) as pool:
+        futures = {pool.submit(kayit_isle, item, session): item["id"] for item in items}
+        for f in as_completed(futures):
+            _, ok = f.result()
+            if ok:
+                yeni += 1
+    return yeni
+
+
 def calistir():
     klasor_olustur(DATASET_DIR)
 
-    tarayici = Tarayici()
-    tarayici.baslat()
+    # 1. Selenium ile captcha bypass
+    cookies, ua = cookie_al()
+    session = session_olustur(cookies, ua)
 
-    session = requests.Session()
-    session.headers.update(HEADERS)
+    # 2. İlk sayfayı test et
+    test = galeri_sayfasi_cek(session, 1)
+    if not test:
+        log.error("Cookie'ler çalışmıyor! Tekrar deneyin.")
+        return
+    log.info(f"Test başarılı: {len(test)} kayıt bulundu.")
 
     toplam_kayit = 0
     toplam_yeni = 0
     sayfa_no = 0
     ardisik_bos = 0
+    batch_boyut = 10  # Her turda 10 sayfa paralel çek
+
+    baslangic = time.time()
 
     while True:
-        # URL oluştur
-        if sayfa_no == 0:
-            url = GALERI_URL
-        else:
-            url = f"{GALERI_URL}-{sayfa_no}"
+        # Batch oluştur
+        sayfa_listesi = list(range(sayfa_no, sayfa_no + batch_boyut))
 
-        log.info(f"Sayfa {sayfa_no + 1}: {url}")
-
-        if not tarayici.git(url):
-            log.warning(f"Sayfa açılamadı, atlıyorum.")
-            ardisik_bos += 1
-            if ardisik_bos >= 5:
-                log.error("Ardışık 5 sayfa açılamadı, durduruluyor.")
-                break
-            sayfa_no += 1
-            continue
-
-        bekle(SAYFA_BEKLEME_MIN, SAYFA_BEKLEME_MAKS)
-
-        # Galeri verisi çek
-        items = galeri_verisi_cek(tarayici.driver)
+        # Paralel sayfa çek
+        items = batch_sayfa_cek(session, sayfa_listesi)
 
         if not items:
             ardisik_bos += 1
-            log.warning(f"  Veri yok (ardışık boş: {ardisik_bos})")
-            if ardisik_bos >= 5:
-                log.info("Ardışık 5 boş sayfa, galeri sonu.")
+            if ardisik_bos >= 3:
+                log.info("Ardışık 3 boş batch, galeri sonu.")
                 break
-            sayfa_no += 1
+            sayfa_no += batch_boyut
             continue
 
         ardisik_bos = 0
-        log.info(f"  {len(items)} kayıt bulundu.")
 
         # Paralel indir + kaydet
-        yeni = 0
-        with ThreadPoolExecutor(max_workers=INDIRME_PARALEL) as pool:
-            futures = {pool.submit(kayit_isle, item, session): item["id"] for item in items}
-            for f in as_completed(futures):
-                item_id, ok = f.result()
-                if ok:
-                    yeni += 1
+        yeni = batch_kayit_isle(items, session)
 
         toplam_kayit += len(items)
         toplam_yeni += yeni
-        log.info(f"  {yeni} kayıt işlendi. [Toplam: {toplam_kayit} kayıt, {toplam_yeni} yeni]")
+        sayfa_no += batch_boyut
 
-        sayfa_no += 1
+        gecen = time.time() - baslangic
+        hiz = toplam_kayit / gecen if gecen > 0 else 0
+        log.info(f"Sayfa {sayfa_no}: {len(items)} kayıt, {yeni} yeni | "
+                 f"Toplam: {toplam_kayit} kayıt, {toplam_yeni} yeni | "
+                 f"Hız: {hiz:.0f} kayıt/sn")
 
         # Maks sayfa kontrolü
         if MAKS_SAYFA > 0 and sayfa_no >= MAKS_SAYFA:
@@ -379,9 +370,12 @@ def calistir():
             log.info(f"  Mola ({COOLDOWN_SURE}sn)...")
             time.sleep(COOLDOWN_SURE)
 
-    tarayici.kapat()
+        time.sleep(SAYFA_BEKLEME)
+
+    gecen_toplam = time.time() - baslangic
     print("=" * 60)
     log.info(f"BİTTİ! {toplam_kayit} kayıt tarandı, {toplam_yeni} yeni işlendi.")
+    log.info(f"Süre: {gecen_toplam/60:.1f} dakika | Hız: {toplam_kayit/gecen_toplam:.0f} kayıt/sn")
     log.info(f"Klasör: {os.path.abspath(DATASET_DIR)}")
 
 
