@@ -99,6 +99,9 @@ def cookie_al() -> tuple[dict, str]:
 def session_olustur(cookies: dict, ua: str) -> requests.Session:
     """Cookie'lerle requests session oluştur."""
     session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
     session.headers.update({
         "User-Agent": ua,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -237,16 +240,18 @@ def kayit_isle(item: dict, session: requests.Session) -> tuple[str, bool]:
     item_id = item["id"]
     klasor = os.path.join(DATASET_DIR, item_id)
 
-    # Zaten var mı?
+    # Zaten tam mı? (bilgi + foto + plaka)
     bilgi_yol = os.path.join(klasor, "bilgi.txt")
-    if os.path.exists(bilgi_yol):
+    foto_yol_kontrol = os.path.join(klasor, "foto.jpg")
+    if os.path.exists(bilgi_yol) and os.path.exists(foto_yol_kontrol):
         return (item_id, True)
 
     klasor_olustur(klasor)
 
     # Bilgi yaz
-    bilgi = bilgi_parse(item)
-    bilgi_txt_yaz(klasor, bilgi)
+    if not os.path.exists(bilgi_yol):
+        bilgi = bilgi_parse(item)
+        bilgi_txt_yaz(klasor, bilgi)
 
     # Fotoğraf indir
     foto_yol = os.path.join(klasor, "foto.jpg")
@@ -254,13 +259,13 @@ def kayit_isle(item: dict, session: requests.Session) -> tuple[str, bool]:
         # /m/ -> /o/ (orijinal boyut)
         orijinal_url = item["img_url"].replace("/m/", "/o/")
         try:
-            r = session.get(orijinal_url, timeout=INDIRME_TIMEOUT, headers=HEADERS)
+            r = session.get(orijinal_url, timeout=INDIRME_TIMEOUT)
             if r.status_code == 200 and len(r.content) > 1000:
                 with open(foto_yol, "wb") as f:
                     f.write(r.content)
             else:
                 # Orijinal yoksa medium kullan
-                r = session.get(item["img_url"], timeout=INDIRME_TIMEOUT, headers=HEADERS)
+                r = session.get(item["img_url"], timeout=INDIRME_TIMEOUT)
                 if r.status_code == 200 and len(r.content) > 1000:
                     with open(foto_yol, "wb") as f:
                         f.write(r.content)
@@ -271,7 +276,7 @@ def kayit_isle(item: dict, session: requests.Session) -> tuple[str, bool]:
     plaka_yol = os.path.join(klasor, "plaka.png")
     if not os.path.exists(plaka_yol) and item.get("plaka_img_url"):
         try:
-            r = session.get(item["plaka_img_url"], timeout=INDIRME_TIMEOUT, headers=HEADERS)
+            r = session.get(item["plaka_img_url"], timeout=INDIRME_TIMEOUT)
             if r.status_code == 200 and len(r.content) > 500:
                 with open(plaka_yol, "wb") as f:
                     f.write(r.content)
